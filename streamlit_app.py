@@ -1,172 +1,167 @@
 import datetime
-import random
 
 import altair as alt
-import numpy as np
 import pandas as pd
 import streamlit as st
 
-# Show app title and description.
-st.set_page_config(page_title="Support tickets", page_icon="🎫")
-st.title("🎫 Support tickets")
-st.write(
-    """
-    This app shows how you can build an internal tool in Streamlit. Here, we are 
-    implementing a support ticket workflow. The user can create a ticket, edit 
-    existing tickets, and view some statistics.
-    """
-)
+def initialize_state():
+    """Initializes the session state with an empty, structured DataFrame."""
+    if "df" not in st.session_state:
+        # Define the structure of the DataFrame
+        columns = ["ID", "Category", "Update", "Status", "Priority", "Date Logged"]
+        st.session_state.df = pd.DataFrame(columns=columns)
+        # Set specific data types for columns to ensure consistency
+        st.session_state.df = st.session_state.df.astype({
+            "ID": str,
+            "Category": str,
+            "Update": str,
+            "Status": str,
+            "Priority": str,
+            "Date Logged": "datetime64[ns]"
+        })
 
-# Create a random Pandas dataframe with existing tickets.
-if "df" not in st.session_state:
+def display_header():
+    """Displays the header and introduction of the Streamlit app."""
+    st.title("📈 Business Operations Tracker")
+    st.write(
+        """
+        This app provides a centralized dashboard to track real-time updates across
+        different business functions. Log new updates, edit existing ones, and visualize progress.
+        """
+    )
 
-    # Set seed for reproducibility.
-    np.random.seed(42)
-
-    # Make up some fake issue descriptions.
-    issue_descriptions = [
-        "Network connectivity issues in the office",
-        "Software application crashing on startup",
-        "Printer not responding to print commands",
-        "Email server downtime",
-        "Data backup failure",
-        "Login authentication problems",
-        "Website performance degradation",
-        "Security vulnerability identified",
-        "Hardware malfunction in the server room",
-        "Employee unable to access shared files",
-        "Database connection failure",
-        "Mobile application not syncing data",
-        "VoIP phone system issues",
-        "VPN connection problems for remote employees",
-        "System updates causing compatibility issues",
-        "File server running out of storage space",
-        "Intrusion detection system alerts",
-        "Inventory management system errors",
-        "Customer data not loading in CRM",
-        "Collaboration tool not sending notifications",
+def display_add_update_form():
+    """Displays the form to add a new business update."""
+    st.header("Log a New Update")
+    
+    categories = [
+        "Lead Contacted", "Client Payment Received", "Client Feedback", 
+        "Software Update", "App Update", "Digital Marketing Update", 
+        "Mixing and Mastering Update", "Operations Update", "Utilities Update", 
+        "Resource Purchase", "Legal Update", "UI/UX Update", "Custom"
     ]
 
-    # Generate the dataframe with 100 rows/tickets.
-    data = {
-        "ID": [f"TICKET-{i}" for i in range(1100, 1000, -1)],
-        "Issue": np.random.choice(issue_descriptions, size=100),
-        "Status": np.random.choice(["Open", "In Progress", "Closed"], size=100),
-        "Priority": np.random.choice(["High", "Medium", "Low"], size=100),
-        "Date Submitted": [
-            datetime.date(2023, 6, 1) + datetime.timedelta(days=random.randint(0, 182))
-            for _ in range(100)
-        ],
-    }
-    df = pd.DataFrame(data)
+    with st.form("add_update_form", clear_on_submit=True):
+        category_selection = st.selectbox("Category", categories)
+        
+        custom_category = ""
+        if category_selection == "Custom":
+            custom_category = st.text_input("Enter Custom Category Name")
 
-    # Save the dataframe in session state (a dictionary-like object that persists across
-    # page runs). This ensures our data is persisted when the app updates.
-    st.session_state.df = df
+        update_description = st.text_area("Update Description")
+        priority = st.selectbox("Priority", ["High", "Medium", "Low"], index=1)
+        submitted = st.form_submit_button("Submit")
 
+        if submitted and update_description:
+            final_category = custom_category if category_selection == "Custom" and custom_category else category_selection
+            
+            if final_category == "Custom":
+                st.warning("Please enter a name for the custom category.")
+                return
 
-# Show a section to add a new ticket.
-st.header("Add a ticket")
-
-# We're adding tickets via an `st.form` and some input widgets. If widgets are used
-# in a form, the app will only rerun once the submit button is pressed.
-with st.form("add_ticket_form"):
-    issue = st.text_area("Describe the issue")
-    priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-    submitted = st.form_submit_button("Submit")
-
-if submitted:
-    # Make a dataframe for the new ticket and append it to the dataframe in session
-    # state.
-    recent_ticket_number = int(max(st.session_state.df.ID).split("-")[1])
-    today = datetime.datetime.now().strftime("%m-%d-%Y")
-    df_new = pd.DataFrame(
-        [
-            {
-                "ID": f"TICKET-{recent_ticket_number+1}",
-                "Issue": issue,
-                "Status": "Open",
+            # Generate new ID safely
+            if st.session_state.df.empty:
+                new_id_num = 1001
+            else:
+                last_id_num = int(st.session_state.df['ID'].str.replace('UPDATE-', '').max())
+                new_id_num = last_id_num + 1
+            new_update_id = f"UPDATE-{new_id_num}"
+            
+            df_new = pd.DataFrame([{
+                "ID": new_update_id,
+                "Category": final_category,
+                "Update": update_description,
+                "Status": "Not Started",
                 "Priority": priority,
-                "Date Submitted": today,
-            }
-        ]
+                "Date Logged": pd.to_datetime(datetime.date.today()),
+            }])
+
+            st.session_state.df = pd.concat([df_new, st.session_state.df], ignore_index=True)
+            st.success("Update logged successfully!")
+        elif submitted:
+            st.warning("Please provide an update description before submitting.")
+
+def display_existing_updates():
+    """Displays the existing updates in an editable data editor."""
+    st.header("Activity Log")
+    st.write(f"Total Updates: `{len(st.session_state.df)}`")
+
+    if st.session_state.df.empty:
+        st.info("No updates have been logged yet. Use the form above to add your first update.")
+        return
+
+    edited_df = st.data_editor(
+        st.session_state.df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                "Status", help="Task status", options=["Not Started", "In Progress", "Completed", "On Hold"], required=True
+            ),
+            "Priority": st.column_config.SelectboxColumn(
+                "Priority", help="Priority", options=["High", "Medium", "Low"], required=True
+            ),
+            "Date Logged": st.column_config.DateColumn("Date Logged", format="YYYY-MM-DD"),
+            "Update": st.column_config.TextColumn("Update")
+        },
+        disabled=["ID", "Category", "Date Logged"],
     )
+    # Update the session state with the edited data
+    if edited_df is not None:
+        st.session_state.df = edited_df
 
-    # Show a little success message.
-    st.write("Ticket submitted! Here are the ticket details:")
-    st.dataframe(df_new, use_container_width=True, hide_index=True)
-    st.session_state.df = pd.concat([df_new, st.session_state.df], axis=0)
 
-# Show section to view and edit existing tickets in a table.
-st.header("Existing tickets")
-st.write(f"Number of tickets: `{len(st.session_state.df)}`")
+def display_statistics(df: pd.DataFrame):
+    """Displays statistics and charts based on the update data."""
+    st.header("Dashboard")
+    
+    if df.empty:
+        st.info("The dashboard will populate with charts and metrics once you log an update.")
+        return
 
-st.info(
-    "You can edit the tickets by double clicking on a cell. Note how the plots below "
-    "update automatically! You can also sort the table by clicking on the column headers.",
-    icon="✍️",
-)
+    # Metrics
+    num_completed = len(df[df["Status"] == "Completed"])
+    num_in_progress = len(df[df["Status"] == "In Progress"])
+    num_not_started = len(df[df["Status"] == "Not Started"])
 
-# Show the tickets dataframe with `st.data_editor`. This lets the user edit the table
-# cells. The edited data is returned as a new dataframe.
-edited_df = st.data_editor(
-    st.session_state.df,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Status": st.column_config.SelectboxColumn(
-            "Status",
-            help="Ticket status",
-            options=["Open", "In Progress", "Closed"],
-            required=True,
-        ),
-        "Priority": st.column_config.SelectboxColumn(
-            "Priority",
-            help="Priority",
-            options=["High", "Medium", "Low"],
-            required=True,
-        ),
-    },
-    # Disable editing the ID and Date Submitted columns.
-    disabled=["ID", "Date Submitted"],
-)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Completed", num_completed)
+    col2.metric("In Progress", num_in_progress)
+    col3.metric("Not Started", num_not_started)
 
-# Show some metrics and charts about the ticket.
-st.header("Statistics")
+    st.divider()
 
-# Show metrics side by side using `st.columns` and `st.metric`.
-col1, col2, col3 = st.columns(3)
-num_open_tickets = len(st.session_state.df[st.session_state.df.Status == "Open"])
-col1.metric(label="Number of open tickets", value=num_open_tickets, delta=10)
-col2.metric(label="First response time (hours)", value=5.2, delta=-1.5)
-col3.metric(label="Average resolution time (hours)", value=16, delta=2)
+    # Charts
+    col1, col2 = st.columns([3, 2])
+    with col1:
+        st.write("##### Updates by Category")
+        category_chart = alt.Chart(df).mark_bar().encode(
+            x=alt.X("Category:N", sort='-y', title="Category"),
+            y=alt.Y("count():Q", title="Number of Updates"),
+            color=alt.Color("Category:N", legend=None)
+        ).properties(height=350)
+        st.altair_chart(category_chart, use_container_width=True, theme="streamlit")
+        
+    with col2:
+        st.write("##### Status Distribution")
+        status_chart = alt.Chart(df).mark_arc(innerRadius=60).encode(
+            theta=alt.Theta(field="Status", aggregate="count"),
+            color=alt.Color(field="Status", type="nominal", scale=alt.Scale(
+                domain=['Completed', 'In Progress', 'Not Started', 'On Hold'],
+                range=['#2E8B57', '#FFA500', '#FF4B4B', '#808080']
+            )),
+        ).properties(height=350).configure_legend(orient="bottom", titlePadding=5)
+        st.altair_chart(status_chart, use_container_width=True, theme="streamlit")
 
-# Show two Altair charts using `st.altair_chart`.
-st.write("")
-st.write("##### Ticket status per month")
-status_plot = (
-    alt.Chart(edited_df)
-    .mark_bar()
-    .encode(
-        x="month(Date Submitted):O",
-        y="count():Q",
-        xOffset="Status:N",
-        color="Status:N",
-    )
-    .configure_legend(
-        orient="bottom", titleFontSize=14, labelFontSize=14, titlePadding=5
-    )
-)
-st.altair_chart(status_plot, use_container_width=True, theme="streamlit")
+def main():
+    """Main function to run the Streamlit app."""
+    st.set_page_config(page_title="Business Operations Tracker", page_icon="📈", layout="wide")
 
-st.write("##### Current ticket priorities")
-priority_plot = (
-    alt.Chart(edited_df)
-    .mark_arc()
-    .encode(theta="count():Q", color="Priority:N")
-    .properties(height=300)
-    .configure_legend(
-        orient="bottom", titleFontSize=14, labelFontSize=14, titlePadding=5
-    )
-)
-st.altair_chart(priority_plot, use_container_width=True, theme="streamlit")
+    initialize_state()
+    display_header()
+    display_add_update_form()
+    display_existing_updates()
+    display_statistics(st.session_state.df)
+
+if __name__ == '__main__':
+    main()
