@@ -4,6 +4,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+
 def initialize_state():
     """Initializes the session state with an empty, structured DataFrame."""
     if "df" not in st.session_state:
@@ -29,6 +30,59 @@ def display_header():
         different business functions. Log new updates, edit existing ones, and visualize progress.
         """
     )
+
+def display_csv_uploader():
+    """Displays a file uploader to load data from a CSV file with duplicate checking."""
+    with st.expander("Upload or Merge Data from CSV"):
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type="csv",
+            help="Upload a CSV with columns: ID, Category, Update, Status, Priority, Date Logged (YYYY-MM-DD)"
+        )
+        if uploaded_file is not None:
+            try:
+                # Read and validate the uploaded CSV
+                uploaded_df = pd.read_csv(uploaded_file)
+                
+                expected_columns = {
+                    "ID": str, "Category": str, "Update": str,
+                    "Status": str, "Priority": str, "Date Logged": "datetime64[ns]"
+                }
+                
+                if not all(col in uploaded_df.columns for col in expected_columns):
+                    st.error("The uploaded CSV is missing one or more required columns. "
+                             "Please ensure it has: ID, Category, Update, Status, Priority, Date Logged.")
+                    return
+                
+                # Enforce correct data types
+                uploaded_df = uploaded_df.astype({k: v for k, v in expected_columns.items() if k != "Date Logged"})
+                uploaded_df["Date Logged"] = pd.to_datetime(uploaded_df["Date Logged"])
+
+                # --- Conditional Import Logic ---
+                if st.session_state.df.empty:
+                    # Case 1: No existing data. Load the entire CSV.
+                    st.session_state.df = uploaded_df
+                    st.success(f"Successfully uploaded and loaded {len(uploaded_df)} updates from the CSV!")
+                    st.rerun() # Rerun because state has changed
+                else:
+                    # Case 2: Existing data is present. Check for duplicates based on 'ID'.
+                    existing_ids = st.session_state.df['ID'].tolist()
+                    
+                    # Filter for new tickets (IDs not in the existing dataframe)
+                    new_tickets_df = uploaded_df[~uploaded_df['ID'].isin(existing_ids)]
+                    num_new = len(new_tickets_df)
+                    num_duplicates = len(uploaded_df) - num_new
+
+                    # Append only the new, non-duplicate tickets
+                    if num_new > 0:
+                        st.session_state.df = pd.concat([st.session_state.df, new_tickets_df], ignore_index=True)
+                        st.success(f"Successfully imported {num_new} new updates.")
+                        st.rerun() # Rerun because state has changed
+                    
+                   
+            except Exception as e:
+                st.error(f"An error occurred while processing the file: {e}")
+
 
 def display_add_update_form():
     """Displays the form to add a new business update."""
@@ -60,11 +114,17 @@ def display_add_update_form():
                 return
 
             # Generate new ID safely
-            if st.session_state.df.empty:
-                new_id_num = 1001
+            if st.session_state.df.empty or st.session_state.df['ID'].str.replace('UPDATE-', '').str.isnumeric().sum() == 0:
+                 new_id_num = 1001
             else:
-                last_id_num = int(st.session_state.df['ID'].str.replace('UPDATE-', '').max())
-                new_id_num = last_id_num + 1
+                 # Filter out non-numeric IDs before finding the max
+                 numeric_ids = pd.to_numeric(st.session_state.df['ID'].str.replace('UPDATE-', ''), errors='coerce').dropna()
+                 if numeric_ids.empty:
+                     new_id_num = 1001
+                 else:
+                     last_id_num = int(numeric_ids.max())
+                     new_id_num = last_id_num + 1
+
             new_update_id = f"UPDATE-{new_id_num}"
             
             df_new = pd.DataFrame([{
@@ -81,6 +141,7 @@ def display_add_update_form():
         elif submitted:
             st.warning("Please provide an update description before submitting.")
 
+
 def display_existing_updates():
     """Displays the existing updates in an editable data editor."""
     st.header("Activity Log")
@@ -90,8 +151,12 @@ def display_existing_updates():
         st.info("No updates have been logged yet. Use the form above to add your first update.")
         return
 
+    # Make a copy of the dataframe for editing
+    df_to_edit = st.session_state.df.copy()
+    df_to_edit['Date Logged'] = pd.to_datetime(df_to_edit['Date Logged'])
+
     edited_df = st.data_editor(
-        st.session_state.df,
+        df_to_edit,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -101,14 +166,19 @@ def display_existing_updates():
             "Priority": st.column_config.SelectboxColumn(
                 "Priority", help="Priority", options=["High", "Medium", "Low"], required=True
             ),
-            "Date Logged": st.column_config.DateColumn("Date Logged", format="YYYY-MM-DD"),
-            "Update": st.column_config.TextColumn("Update")
+            "Date Logged": st.column_config.DateColumn("Date Logged", format="YYYY-MM-DD", disabled=True),
+            "Update": st.column_config.TextColumn("Update"),
+            "ID": st.column_config.TextColumn("ID", disabled=True),
+            "Category": st.column_config.TextColumn("Category", disabled=True),
         },
-        disabled=["ID", "Category", "Date Logged"],
     )
-    # Update the session state with the edited data
-    if edited_df is not None:
+    
+    # Check if the user has made any changes in the data editor.
+    # This prevents the editor's old state from overwriting the new CSV data.
+    if not st.session_state.df.equals(edited_df):
+        # If there are changes, update the session state and rerun the app to reflect them.
         st.session_state.df = edited_df
+        st.rerun()
 
 
 def display_statistics(df: pd.DataFrame):
@@ -145,7 +215,7 @@ def display_statistics(df: pd.DataFrame):
     with col2:
         st.write("##### Status Distribution")
         status_chart = alt.Chart(df).mark_arc(innerRadius=60).encode(
-            theta=alt.Theta(field="Status", aggregate="count"),
+            theta=alt.Theta(field="Status", type="nominal", aggregate="count"),
             color=alt.Color(field="Status", type="nominal", scale=alt.Scale(
                 domain=['Completed', 'In Progress', 'Not Started', 'On Hold'],
                 range=['#2E8B57', '#FFA500', '#FF4B4B', '#808080']
@@ -153,12 +223,14 @@ def display_statistics(df: pd.DataFrame):
         ).properties(height=350).configure_legend(orient="bottom", titlePadding=5)
         st.altair_chart(status_chart, use_container_width=True, theme="streamlit")
 
+
 def main():
     """Main function to run the Streamlit app."""
     st.set_page_config(page_title="Business Operations Tracker", page_icon="📈", layout="wide")
 
     initialize_state()
     display_header()
+    display_csv_uploader()
     display_add_update_form()
     display_existing_updates()
     display_statistics(st.session_state.df)
